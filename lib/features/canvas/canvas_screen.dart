@@ -5,6 +5,8 @@ import '../../core/rendering/render_controller.dart';
 import '../../core/rendering/render_state.dart';
 import '../../core/rendering/generative_painter.dart';
 import '../parameters/parameter_provider.dart';
+import '../drawing/drawing_controller.dart';
+import '../drawing/drawing_overlay.dart';
 
 /// Providers for the loaded shader programs.
 final generativeShaderProvider = FutureProvider<ui.FragmentProgram>((ref) {
@@ -27,8 +29,10 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
     with SingleTickerProviderStateMixin {
   late final RenderController _renderController;
   late final RenderState _renderState;
+  late final DrawingController _drawingController;
 
   ui.FragmentShader? _generativeShader;
+  ui.FragmentShader? _drawShader;
   bool _shadersReady = false;
 
   @override
@@ -36,6 +40,7 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
     super.initState();
     _renderState = RenderState(seed: DateTime.now().millisecondsSinceEpoch % 1000);
     _renderController = RenderController(onTick: _onTick);
+    _drawingController = DrawingController();
     _renderController.start(this);
   }
 
@@ -55,16 +60,18 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
     _renderController.dispose();
     _renderState.dispose();
     _generativeShader?.dispose();
+    _drawShader?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final shaderAsync = ref.watch(generativeShaderProvider);
+    final genShaderAsync = ref.watch(generativeShaderProvider);
+    final drawShaderAsync = ref.watch(drawShaderProvider);
     final paramState = ref.watch(parameterProvider);
     final shaderParams = paramState.toShaderParams();
 
-    return shaderAsync.when(
+    return genShaderAsync.when(
       loading: () => const ColoredBox(
         color: Colors.black,
         child: Center(child: CircularProgressIndicator(color: Colors.white24)),
@@ -72,39 +79,55 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
       error: (err, stack) => ColoredBox(
         color: Colors.black,
         child: Center(
-          child: Text(
-            'Shader error: $err',
-            style: const TextStyle(color: Colors.red),
-          ),
+          child: Text('Shader error: $err', style: const TextStyle(color: Colors.red)),
         ),
       ),
-      data: (program) {
-        _generativeShader ??= program.fragmentShader();
-        _shadersReady = true;
+      data: (genProgram) {
+        return drawShaderAsync.when(
+          loading: () => const ColoredBox(
+            color: Colors.black,
+            child: Center(child: CircularProgressIndicator(color: Colors.white24)),
+          ),
+          error: (err, stack) => ColoredBox(
+            color: Colors.black,
+            child: Center(
+              child: Text('Draw shader error: $err', style: const TextStyle(color: Colors.red)),
+            ),
+          ),
+          data: (drawProgram) {
+            _generativeShader ??= genProgram.fragmentShader();
+            _drawShader ??= drawProgram.fragmentShader();
+            _shadersReady = true;
 
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            return GestureDetector(
-              // Double tap → new seed + regenerate parameters
-              onDoubleTap: () {
-                final newSeed = DateTime.now().millisecondsSinceEpoch % 10000;
-                ref.read(seedProvider.notifier).state = newSeed;
-                _renderState.seed = newSeed.toDouble();
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final size = Size(constraints.maxWidth, constraints.maxHeight);
+                _drawingController.updateCanvasSize(
+                  size.shortestSide,
+                );
+
+                return Stack(
+                  children: [
+                    // Generative canvas
+                    SizedBox.expand(
+                      child: CustomPaint(
+                        painter: GenerativePainter(
+                          shader: _generativeShader!,
+                          state: _renderState,
+                          size: size,
+                          params: shaderParams,
+                        ),
+                      ),
+                    ),
+                    // Drawing overlay (captures touch)
+                    DrawingOverlay(
+                      controller: _drawingController,
+                      renderState: _renderState,
+                      drawShader: _drawShader!,
+                    ),
+                  ],
+                );
               },
-              // Long press → toggle pause
-              onLongPress: () {
-                _renderController.togglePause();
-              },
-              child: SizedBox.expand(
-                child: CustomPaint(
-                  painter: GenerativePainter(
-                    shader: _generativeShader!,
-                    state: _renderState,
-                    size: Size(constraints.maxWidth, constraints.maxHeight),
-                    params: shaderParams,
-                  ),
-                ),
-              ),
             );
           },
         );
