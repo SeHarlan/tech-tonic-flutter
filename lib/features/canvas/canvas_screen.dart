@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/rendering/render_controller.dart';
 import '../../core/rendering/render_state.dart';
 import '../../core/rendering/generative_painter.dart';
+import '../parameters/parameter_provider.dart';
 
 /// Providers for the loaded shader programs.
 final generativeShaderProvider = FutureProvider<ui.FragmentProgram>((ref) {
@@ -60,6 +61,8 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
   @override
   Widget build(BuildContext context) {
     final shaderAsync = ref.watch(generativeShaderProvider);
+    final paramState = ref.watch(parameterProvider);
+    final shaderParams = paramState.toShaderParams();
 
     return shaderAsync.when(
       loading: () => const ColoredBox(
@@ -82,12 +85,11 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
         return LayoutBuilder(
           builder: (context, constraints) {
             return GestureDetector(
-              // Double tap → new seed
+              // Double tap → new seed + regenerate parameters
               onDoubleTap: () {
-                setState(() {
-                  _renderState.seed =
-                      DateTime.now().millisecondsSinceEpoch % 1000;
-                });
+                final newSeed = DateTime.now().millisecondsSinceEpoch % 10000;
+                ref.read(seedProvider.notifier).state = newSeed;
+                _renderState.seed = newSeed.toDouble();
               },
               // Long press → toggle pause
               onLongPress: () {
@@ -99,6 +101,7 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
                     shader: _generativeShader!,
                     state: _renderState,
                     size: Size(constraints.maxWidth, constraints.maxHeight),
+                    params: shaderParams,
                   ),
                 ),
               ),
