@@ -42,9 +42,9 @@ class GenerativePainter extends CustomPainter {
   });
 
   @override
-  void paint(Canvas canvas, Size canvasSize) {
-    final w = canvasSize.width;
-    final h = canvasSize.height;
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
     if (w <= 0 || h <= 0) return;
 
     final pixelRatio = ui.PlatformDispatcher.instance.views.first.devicePixelRatio;

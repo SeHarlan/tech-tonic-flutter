@@ -13,6 +13,7 @@ class ControlsDrawer extends StatelessWidget {
   final VoidCallback onClear;
   final VoidCallback onToggleManual;
   final VoidCallback onToggleFreeze;
+  final VoidCallback? onCapture;
   final bool isManualMode;
   final bool isFrozen;
   final VoidCallback onChanged;
@@ -24,6 +25,7 @@ class ControlsDrawer extends StatelessWidget {
     required this.onClear,
     required this.onToggleManual,
     required this.onToggleFreeze,
+    this.onCapture,
     required this.isManualMode,
     required this.isFrozen,
     required this.onChanged,
@@ -88,6 +90,7 @@ class ControlsDrawer extends StatelessWidget {
             children: [
               _actionButton('NEW SEED', onNewSeed),
               _actionButton('CLEAR', onClear),
+              if (onCapture != null) _actionButton('CAPTURE', onCapture!),
               _toggleButton('MANUAL', isManualMode, onToggleManual),
               _toggleButton('FREEZE', isFrozen, onToggleFreeze),
             ],

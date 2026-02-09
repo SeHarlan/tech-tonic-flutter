@@ -8,6 +8,7 @@ import '../parameters/parameter_provider.dart';
 import '../drawing/drawing_controller.dart';
 import '../drawing/drawing_overlay.dart';
 import '../controls/controls_drawer.dart';
+import '../export/image_exporter.dart';
 
 /// Providers for the loaded shader programs.
 final generativeShaderProvider = FutureProvider<ui.FragmentProgram>((ref) {
@@ -183,6 +184,12 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
                           drawingController: _drawingController,
                           onNewSeed: _newSeed,
                           onClear: _clearCanvas,
+                          onCapture: () {
+                            ImageExporter.captureAndShare(
+                              _renderState.currentFrame,
+                              context,
+                            );
+                          },
                           onToggleManual: () {
                             ref.read(parameterProvider.notifier).toggleManualMode();
                           },

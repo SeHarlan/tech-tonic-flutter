@@ -1,7 +1,3 @@
-import 'dart:math' as math;
-import '../../core/math/seeded_rng.dart';
-import '../../core/math/weighted_random.dart';
-
 /// All shader parameters that can be randomized from a seed.
 ///
 /// This mirrors the JS `randomizeShaderParameters()` function
@@ -126,7 +122,7 @@ class ParameterState {
     this.forceReset = false,
   });
 
-  /// Convert to the flat Map<String, double> expected by GenerativePainter.
+  /// Convert to the flat `Map<String, double>` expected by GenerativePainter.
   Map<String, double> toShaderParams() {
     return {
       'targetFps': targetFps,
