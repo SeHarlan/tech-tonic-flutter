@@ -7,6 +7,7 @@ import '../../core/rendering/generative_painter.dart';
 import '../parameters/parameter_provider.dart';
 import '../drawing/drawing_controller.dart';
 import '../drawing/drawing_overlay.dart';
+import '../controls/controls_drawer.dart';
 
 /// Providers for the loaded shader programs.
 final generativeShaderProvider = FutureProvider<ui.FragmentProgram>((ref) {
@@ -34,6 +35,7 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
   ui.FragmentShader? _generativeShader;
   ui.FragmentShader? _drawShader;
   bool _shadersReady = false;
+  bool _showControls = false;
 
   @override
   void initState() {
@@ -51,8 +53,31 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
     _renderState.fps = _renderController.fps;
     _renderState.isPaused = _renderController.isPaused;
     if (mounted) {
-      setState(() {}); // trigger repaint
+      setState(() {});
     }
+  }
+
+  void _toggleControls() {
+    setState(() {
+      _showControls = !_showControls;
+    });
+  }
+
+  void _newSeed() {
+    final newSeed = DateTime.now().millisecondsSinceEpoch % 10000;
+    ref.read(seedProvider.notifier).state = newSeed;
+    _renderState.seed = newSeed.toDouble();
+  }
+
+  void _clearCanvas() {
+    final paramNotifier = ref.read(parameterProvider.notifier);
+    paramNotifier.setForceReset(true);
+    // Reset after a few frames
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) {
+        paramNotifier.setForceReset(false);
+      }
+    });
   }
 
   @override
@@ -102,9 +127,7 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
             return LayoutBuilder(
               builder: (context, constraints) {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
-                _drawingController.updateCanvasSize(
-                  size.shortestSide,
-                );
+                _drawingController.updateCanvasSize(size.shortestSide);
 
                 return Stack(
                   children: [
@@ -119,12 +142,58 @@ class _CanvasScreenState extends ConsumerState<CanvasScreen>
                         ),
                       ),
                     ),
-                    // Drawing overlay (captures touch)
-                    DrawingOverlay(
-                      controller: _drawingController,
-                      renderState: _renderState,
-                      drawShader: _drawShader!,
+
+                    // Drawing overlay (captures touch when controls are hidden)
+                    if (!_showControls)
+                      DrawingOverlay(
+                        controller: _drawingController,
+                        renderState: _renderState,
+                        drawShader: _drawShader!,
+                      ),
+
+                    // Menu toggle button (bottom-right)
+                    Positioned(
+                      bottom: _showControls ? null : 16,
+                      right: 16,
+                      top: _showControls ? 16 : null,
+                      child: GestureDetector(
+                        onTap: _toggleControls,
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: Icon(
+                            _showControls ? Icons.close : Icons.tune,
+                            color: Colors.white70,
+                            size: 20,
+                          ),
+                        ),
+                      ),
                     ),
+
+                    // Controls drawer
+                    if (_showControls)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: ControlsDrawer(
+                          drawingController: _drawingController,
+                          onNewSeed: _newSeed,
+                          onClear: _clearCanvas,
+                          onToggleManual: () {
+                            ref.read(parameterProvider.notifier).toggleManualMode();
+                          },
+                          onToggleFreeze: () {
+                            ref.read(parameterProvider.notifier).toggleGlobalFreeze();
+                          },
+                          isManualMode: paramState.manualMode,
+                          isFrozen: paramState.globalFreeze,
+                          onChanged: () => setState(() {}),
+                        ),
+                      ),
                   ],
                 );
               },
