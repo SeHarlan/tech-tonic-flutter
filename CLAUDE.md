@@ -12,14 +12,14 @@ A generative art application being converted from vanilla JS/WebGL to Flutter fo
 
 ## Conversion Context
 
-This project is a ground-up Flutter rebuild of a vanilla JS/WebGL generative art app. The original source files (`main.js`, `index.html`, `style.css`, `fragmentShader.glsl`, `vertexShader.glsl`) remain in the repo as reference.
+This project is a ground-up Flutter rebuild of a vanilla JS/WebGL generative art app. The original source files live in the `reference/` folder.
 
 ### Original Architecture (Reference)
-- `main.js` - Core WebGL rendering, ping-pong framebuffers, state management, input handling
-- `fragmentShader.glsl` - 770-line fragment shader with 53 uniforms (movement, waterfall, reset, colors, noise)
-- `vertexShader.glsl` - Simple passthrough vertex shader
-- `index.html` - Menu UI with drawer, brush controls, directional pad
-- `style.css` - Terminal-aesthetic UI styling
+- `reference/main.js` - Core WebGL rendering, ping-pong framebuffers, state management, input handling
+- `reference/fragmentShader.glsl` - 770-line fragment shader with 53 uniforms (movement, waterfall, reset, colors, noise)
+- `reference/vertexShader.glsl` - Simple passthrough vertex shader
+- `reference/index.html` - Menu UI with drawer, brush controls, directional pad
+- `reference/style.css` - Terminal-aesthetic UI styling
 
 ### Key Technical Patterns to Preserve
 - **Ping-pong rendering**: Frame N reads from texture A, writes to B; frame N+1 reads from B, writes to A
