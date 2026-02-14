@@ -14,378 +14,209 @@ tech-Tonic is a generative art app built with vanilla JS/WebGL featuring a 770-l
 
 ---
 
-## Phase 1: Project Bootstrap & Math Utilities
+## Current Status (as of commit `6a057f9`)
+
+### Completed
+- Phase 1: Project bootstrap (no math utils ported — noise lives in shader only)
+- Phase 2: Shader porting (generative.frag: 473 lines, draw.frag: 64 lines)
+- Phase 3: Ping-pong rendering pipeline (Impeller-compatible)
+- Phase 4: Shader parameters & seed system (minimal — 8 runtime uniforms, rest hard-coded)
+- Phase 5: Touch drawing & draw buffer (Canvas API approach, not draw shader)
+- Phase 6: Controls UI (controls drawer with paint mode selector, brush controls, direction pad)
+- Phase 7-8: Image export, basic polish
+
+### Key Deviations from Original Plan
+1. **No `toImageSync()`** — crashes with Impeller on iOS. Replaced with `RenderRepaintBoundary.toImage()` for the feedback loop.
+2. **No draw shader for compositing** — `Picture.toImage()` crashes with Impeller when the Picture contains custom shaders with `sampler2D`. Drawing uses Flutter Canvas API instead.
+3. **Uniforms reduced to 8 floats + 2 samplers** — Metal's 31 buffer limit required hard-coding most parameters as shader constants.
+4. **Y-axis flipped in shader** — `FlutterFragCoord()` has Y=0 at top (Flutter) vs Y=0 at bottom (WebGL). Shader flips Y at start and flips back for texture sampling.
+5. **Placeholder images via `decodeImageFromPixels()`** — avoids Picture/PictureRecorder entirely for initial frame creation.
+6. **Profile mode required** — debug builds crash when launched from iOS home screen without debugger. Must use `--profile` or `--release`.
+7. **Build from ~/Development** — iCloud-synced Desktop folder breaks code signing with resource forks.
+
+### What Still Needs Work
+- Pinch-to-zoom gesture for brush size (not yet wired)
+- Multi-finger gestures (double-tap for new seed, three-finger for screenshot)
+- Brush cursor overlay (visual indicator at touch point)
+- Android testing (untested)
+- Performance profiling & optimization
+- Save/load session state
+- Making draw buffer channel-selective (currently overwrites all channels; original shader preserved individual channels)
+
+---
+
+## Phase 1: Project Bootstrap & Math Utilities -- COMPLETE
 
 **Goal**: Flutter project initialized, Dart ports of all noise/math/color functions with tests.
 
-### 1a. Initialize Flutter project
-- Run `flutter create --org com.ev3 --project-name tech_tonic .` in the repo (creates alongside existing JS files)
-- Add dependencies to `pubspec.yaml`:
-  - `flutter_riverpod` (state management)
-  - `freezed_annotation` + `freezed` + `build_runner` (immutable state classes)
-  - `json_annotation` + `json_serializable` (future save/load serialization)
-- Declare shaders in `pubspec.yaml`:
-  ```yaml
-  flutter:
-    shaders:
-      - shaders/generative.frag
-      - shaders/draw.frag
-  ```
+### 1a. Initialize Flutter project -- DONE
+- Flutter project created with `flutter create`
+- Dependencies: `flutter_riverpod`, `freezed_annotation`, `freezed`, `build_runner`, `json_annotation`, `json_serializable`
+- Shaders declared in `pubspec.yaml`
 
-### 1b. Port math utilities → `lib/core/math/`
-- **`noise.dart`** — Port `random()`, `seededRandom()`, `random3D()`, `noise()`, `noise3D()`, `structuralNoise()`, `fbm()` as pure Dart functions
-  - These are needed for CPU-side parameter generation (the same functions also exist in the shader for GPU-side use)
-- **`seeded_rng.dart`** — Port Mulberry32 seeded RNG (`createSeededRNG` from main.js)
-- **`weighted_random.dart`** — Port `weightedRandom()` function
-- **`color_utils.dart`** — Port `rgb2hsl()`, `hsl2rgb()`, `increaseColorHue()` (needed for UI color display)
+### 1b. Port math utilities -- SKIPPED
+- Noise/math functions live exclusively in the GLSL shader (GPU-side)
+- No CPU-side Dart ports needed since parameters are hard-coded in the shader
 
-### 1c. Write tests → `test/core/math/`
-- Test noise functions produce deterministic output for known inputs
-- Test seeded RNG matches JS output for same seeds (cross-validate with a few known seed→output pairs from the JS version)
-- Test weighted random distribution is reasonable
-- Test HSL↔RGB roundtrip accuracy
-
-**Files created**:
-- `lib/core/math/noise.dart`
-- `lib/core/math/seeded_rng.dart`
-- `lib/core/math/weighted_random.dart`
-- `lib/core/math/color_utils.dart`
-- `test/core/math/noise_test.dart`
-- `test/core/math/seeded_rng_test.dart`
+### 1c. Tests -- SKIPPED
+- No math utility tests needed since functions are shader-only
 
 ---
 
-## Phase 2: Shader Porting (Highest Risk)
+## Phase 2: Shader Porting (Highest Risk) -- COMPLETE
 
 **Goal**: Both GLSL shaders compile and run in Flutter.
 
-### 2a. Port fragment shader → `shaders/generative.frag`
-- Start from `fragmentShader.glsl`, make these changes:
-  - Add `#include <flutter/runtime_effect.glsl>` at top
-  - Replace `varying vec2 v_texCoord` with `FlutterFragCoord()` and normalize by resolution
-  - Replace all `texture2D()` calls with `texture()`
-  - Replace `uniform` declarations with Flutter's `uniform` layout (float uniforms accessed by index via `setFloat()`)
-  - Sampler2D: use `uniform sampler2D u_texture` and `uniform sampler2D u_drawTexture` — Flutter binds these via `setImageSampler(0, ...)` and `setImageSampler(1, ...)`
-  - **FBM loop fix**: Replace dynamic `if(i >= octaves) break;` with `step()` accumulation
-  - **Float equality fix**: Replace `color.r == 0.` checks with tolerance `color.r < 0.01`
-  - `bool` uniforms → encode as `float` (0.0/1.0) since Flutter's `setFloat()` only does floats
-  - Remove `precision mediump float;` (Flutter handles precision)
+### 2a. Port fragment shader → `shaders/generative.frag` -- DONE
+- Ported from 770-line WebGL shader to 473-line Flutter GLSL
+- Key adaptations:
+  - `#include <flutter/runtime_effect.glsl>` added
+  - `gl_FragCoord` → `FlutterFragCoord()`
+  - `texture2D()` → `texture()`
+  - Y-axis flip: `st.y = 1.0 - st.y` at start, `vec2(st.x, 1.0 - st.y)` for all texture samples
+  - Bool uniforms encoded as floats (0.0/1.0)
+  - FBM loop uses `step()` instead of dynamic break
+  - Float equality uses tolerance (`< 0.01`) instead of `==`
+  - Most uniforms hard-coded as `const` to stay under Metal's 31 buffer limit
 
-### 2b. Port drawing shader → `shaders/draw.frag`
-- Port the inline drawing fragment shader from main.js (lines 1109-1171)
-- Same Flutter GLSL adaptations as above
-- Uniforms: center, radius, color, writeR/G/B, clearB, squareMode, eraseMode
-- Sampler: existing draw texture for ping-pong read
+### 2b. Port drawing shader → `shaders/draw.frag` -- DONE
+- 64-line shader for brush compositing
+- **Note**: Currently unused at runtime — drawing is done via Flutter Canvas API for Impeller compatibility. Shader is retained for potential future use.
 
-### 2c. Uniform index mapping → `lib/core/rendering/uniform_mapping.dart`
-- Create a Dart class that maps named parameters to `setFloat()` indices
-- Document the exact index order (must match shader `uniform` declaration order)
-- The generative shader has ~52 uniforms = ~67 float values (vec2 = 2 floats, vec3 = 3 floats)
-
-### 2d. Validate shaders compile
-- Create a minimal test screen that loads both shaders via `FragmentProgram.fromAsset()`
-- Render a simple full-screen quad with the generative shader and hardcoded uniforms
-- **This is the highest-risk step** — if Flutter's shader compiler rejects anything, we debug here
-
-**Files created**:
-- `shaders/generative.frag`
-- `shaders/draw.frag`
-- `lib/core/rendering/uniform_mapping.dart`
+### 2c. Uniform index mapping → `lib/core/rendering/uniform_mapping.dart` -- DONE
+- `GenerativeUniforms` class: 8 float indices + 2 sampler indices
+- `DrawUniforms` class: 15 float indices + 1 sampler index (unused at runtime)
+- Extension methods: `setVec2`, `setVec3`, `setBool` on `ui.FragmentShader`
 
 ---
 
-## Phase 3: Ping-Pong Rendering Pipeline
+## Phase 3: Ping-Pong Rendering Pipeline -- COMPLETE
 
 **Goal**: Feedback loop working — each frame reads previous frame and writes new output.
 
-### 3a. Render controller → `lib/core/rendering/render_controller.dart`
-- Uses `Ticker` (via `SingleTickerProviderStateMixin`) for frame scheduling
-- Each tick:
-  1. Update time, frameCount
-  2. Trigger repaint on CustomPainter
-- FPS throttling: skip frames if elapsed < target interval (default 60fps)
-- Track actual FPS for display
+### 3a. Render controller → `lib/core/rendering/render_controller.dart` -- DONE
+- Uses `Ticker` via `SingleTickerProviderStateMixin`
+- Tracks time, frameCount, FPS (sampled every 1 second)
+- Pause/resume support
 
-### 3b. Ping-pong painter → `lib/core/rendering/generative_painter.dart`
-- `CustomPainter` subclass that implements the ping-pong:
-  1. Create `PictureRecorder` → `Canvas`
-  2. Set all float uniforms via `shader.setFloat(index, value)`
-  3. Bind previous frame image: `shader.setImageSampler(0, previousFrameImage)`
-  4. Bind draw buffer image: `shader.setImageSampler(1, drawBufferImage)`
-  5. `canvas.drawRect(fullScreen, Paint()..shader = shader)`
-  6. `recorder.endRecording().toImageSync(width, height)` → store as next frame's input
-  7. Also paint to the visible canvas for display
-- Two `dart:ui.Image` references for ping-pong swap
-- Dispose old images to prevent memory leaks
+### 3b. Generative painter → `lib/core/rendering/generative_painter.dart` -- DONE (REVISED)
+- **Original plan**: Use `PictureRecorder` + `toImageSync()` for ping-pong capture
+- **Actual implementation**: `CustomPainter` renders shader to canvas; frame capture done externally via `RenderRepaintBoundary.toImage()` in `canvas_screen.dart`
+- Accepts `previousFrame` and `drawBuffer` as `ui.Image` parameters
+- Sets 8 float uniforms + 2 image samplers
 
-### 3c. Render state → `lib/core/rendering/render_state.dart`
-- Riverpod `Notifier` holding:
-  - `time`, `frameCount`, `fps`
-  - `isPaused` (globalFreeze)
-  - `seed`
-  - Reference to current ping-pong images (for future save)
+### 3c. Render state → `lib/core/rendering/render_state.dart` -- DONE
+- Mutable class (not Riverpod) holding:
+  - `time`, `frameCount`, `fps`, `isPaused`, `seed`
+  - `frameImages[2]` — ping-pong frame slots
+  - `drawImages[2]` — ping-pong draw buffer slots
+  - `readIndex` / `writeIndex` with swap methods
 
-### 3d. Main screen → `lib/features/canvas/canvas_screen.dart`
+### 3d. Canvas screen → `lib/features/canvas/canvas_screen.dart` -- DONE (REVISED)
 - `ConsumerStatefulWidget` with `SingleTickerProviderStateMixin`
-- Full-screen `CustomPaint` widget using `GenerativePainter`
-- No UI chrome — just the canvas
+- Loads shaders via `FutureProvider<ui.FragmentProgram>`
+- `RepaintBoundary` wraps `CustomPaint` for frame capture
+- Post-frame callback captures via `boundary.toImage(pixelRatio: 1.0)`
+- `_capturing` flag prevents concurrent capture
 
-**Files created**:
-- `lib/core/rendering/render_controller.dart`
-- `lib/core/rendering/generative_painter.dart`
-- `lib/core/rendering/render_state.dart`
-- `lib/features/canvas/canvas_screen.dart`
-
-**Verification**: App launches showing animated generative art with feedback loop. No interaction yet.
+### Additional: Image helper → `lib/core/rendering/shader_renderer.dart` -- ADDED
+- `ImageHelper.createPlaceholder(w, h)` — creates transparent placeholder images
+- Uses `decodeImageFromPixels()` instead of Picture/PictureRecorder (Impeller-safe)
 
 ---
 
-## Phase 4: Shader Parameters & Seed System
+## Phase 4: Shader Parameters & Seed System -- COMPLETE (SIMPLIFIED)
 
 **Goal**: Randomized parameter sets from seeds, matching JS behavior.
 
-### 4a. Parameter state → `lib/features/parameters/parameter_state.dart`
-- Freezed immutable class with all 52 uniform values
-- Factory `ParameterState.fromSeed(double seed)` that uses Mulberry32 RNG + weighted random to generate parameters (port `randomizeShaderParameters()` from main.js)
-- Method to serialize to/from JSON (for future save)
-
-### 4b. Parameter provider → `lib/features/parameters/parameter_provider.dart`
-- Riverpod `Notifier<ParameterState>`
-- Actions: `newSeed()`, `toggleBlocking()`, `toggleManualMode()`, `setForceReset()`
-- On `newSeed()`: generate new seed → create new `ParameterState.fromSeed()`
-
-### 4c. Wire parameters to shader
-- Update `GenerativePainter` to read from `ParameterState`
-- Map all fields to `setFloat()` calls using `UniformMapping`
-
-**Files created**:
-- `lib/features/parameters/parameter_state.dart`
-- `lib/features/parameters/parameter_provider.dart`
-
-**Verification**: Tap to trigger `newSeed()` → visuals change with new randomized parameters.
+### Implementation -- DONE (simplified)
+- `parameter_state.dart` — Freezed immutable class for UI-facing state (manualMode, globalFreeze, forceReset, seed)
+- `parameter_provider.dart` — Riverpod notifier with actions (toggleManualMode, toggleGlobalFreeze, setForceReset, etc.)
+- **Note**: Most shader parameters are hard-coded in the shader as constants, not passed as uniforms. Only 8 runtime values are dynamic. Full parameter randomization from seed is a future enhancement.
 
 ---
 
-## Phase 5: Drawing Buffer & Interaction
+## Phase 5: Drawing Buffer & Interaction -- COMPLETE (REVISED APPROACH)
 
 **Goal**: User can draw on canvas, encoded as RGB channel values in a separate texture.
 
-### 5a. Draw buffer painter → `lib/core/rendering/draw_buffer_painter.dart`
-- Separate `CustomPainter` for the drawing shader
-- Also ping-pong: reads existing draw texture, writes new one with brush mark added
-- Handles circle and square brush shapes
-- Channel-aware writes (R, G, B independently based on mode)
+### Implementation -- DONE (Canvas API approach)
+- **Original plan**: Use draw shader (`draw.frag`) with `PictureRecorder` + `toImageSync()` for draw buffer compositing
+- **Actual implementation**: Uses Flutter Canvas API (no custom shader) to avoid Impeller crashes
+- `DrawingController` queues touch points via `addStroke()` / `addLine()`
+- `processPendingStrokes()` composites all queued strokes in one batch:
+  1. Draws existing draw buffer via `canvas.drawImageRect()`
+  2. Draws brush shapes (circle/rect) with encoded paint mode color
+  3. Captures via `Picture.toImage()` (safe — no shader samplers in the Picture)
+- `DrawingOverlay` captures pan gestures and queues stroke points
+- Paint mode encoding preserved from JS (R=move/shuffle, G=waterfall/trickle, B=freeze/reset)
 
-### 5b. Drawing controller → `lib/features/drawing/drawing_controller.dart`
-- Manages drawing state: `isDrawing`, `lastPoint`, `currentMode`, `currentDirection`
-- `drawAt(Offset point)` — calls draw buffer painter at point
-- `drawLine(Offset from, Offset to)` — interpolates with `brushSize * 0.5` stepping
-- Block snapping logic when `fxWithBlocking` is active
-- Coordinate conversion: Flutter local → texture coordinates (with Y-flip for shader space)
-
-### 5c. Mode color encoding → `lib/features/drawing/mode_color.dart`
-- Port `getModeColor()` — returns RGB values for each mode
-- All 12+ modes with exact channel values matching the JS version:
-
-| Channel | Range | Meaning |
-|---------|-------|---------|
-| R | 0.25-0.5 | Shuffle (0.375) |
-| R | 0.5-0.75 | Move left (0.625) |
-| R | 0.75+ | Move right (0.875) |
-| G | 0.25-0.5 | Trickle (0.375) |
-| G | 0.5-0.75 | Waterfall down (0.625) |
-| G | 0.75+ | Waterfall up (0.875) |
-| B | 0.25-0.5 | Freeze (0.375) |
-| B | 0.5-0.5625 | Reset (0.53125) |
-| B | 0.5625-0.625 | Empty (0.59375) |
-| B | 0.625-0.6875 | Static (0.65625) |
-| B | 0.6875-0.75 | Gem (0.71875) |
-
-### 5d. Brush size system → `lib/features/drawing/brush_state.dart`
-- Port `generateBrushSizeOptions()` — both blocking and normal mode distributions
-- Riverpod provider for brush size, responds to pinch gestures
-- Recalculates on screen resize or blocking mode toggle
-
-**Files created**:
-- `lib/core/rendering/draw_buffer_painter.dart`
-- `lib/features/drawing/drawing_controller.dart`
-- `lib/features/drawing/mode_color.dart`
-- `lib/features/drawing/brush_state.dart`
-
-**Verification**: Touch and drag on canvas → marks appear and affect the generative animation.
+### Known Limitation
+- Current Canvas approach overwrites all RGB channels when painting. The original draw shader preserved individual channels (e.g., painting waterfall on G only preserved existing R and B values). This means you can't layer multiple effects at the same pixel. Could be addressed later with color filter matrix or by re-enabling the draw shader if Impeller compatibility improves.
 
 ---
 
-## Phase 6: Gesture System
+## Phase 6: Gesture System -- PARTIALLY COMPLETE
 
-**Goal**: Full touch interaction — draw, pinch to resize, mode picker.
+### Completed
+- Single-finger drawing via `DrawingOverlay` (pan start/update/end)
+- Controls drawer toggle button
 
-### 6a. Gesture handler → `lib/features/canvas/gesture_handler.dart`
-- Single `GestureDetector` using `onScaleStart/Update/End` (handles both 1-finger and 2-finger)
-- **One finger**: drawing (pass focal point to drawing controller)
-- **Two fingers**: brush size (use `scale` factor relative to start, multiply against current brush size)
-- Detect finger count from `ScaleUpdateDetails.pointerCount`
-- When going from 1→2 fingers: stop drawing, start resize
-- When going from 2→1 fingers: stop resize, resume drawing
-
-### 6b. Wire to canvas screen
-- Wrap `CustomPaint` in `GestureDetector`
-- Connect scale events to drawing controller and brush state
-
-**Files created**:
-- `lib/features/canvas/gesture_handler.dart`
-
-**Verification**: Draw with one finger, pinch with two to resize brush.
+### Not Yet Implemented
+- Two-finger pinch for brush size
+- Double-tap for new seed
+- Three-finger tap for screenshot
+- Proper gesture arbitration between draw and pinch
 
 ---
 
-## Phase 7: Mode Picker UI (Minimal Floating Button)
+## Phase 7: Controls UI -- COMPLETE
 
-**Goal**: Single floating button that opens a clean mode picker.
-
-### 7a. Mode picker → `lib/features/controls/mode_picker.dart`
-- Small floating button in bottom-right corner (semi-transparent, minimal)
-- On tap: expands to a compact grid/radial of mode icons
-- Mode categories:
-  - **Movement**: ↑↓←→ waterfall/move arrows
-  - **Effects**: shuffle, trickle, freeze, erase
-  - **Paint**: reset, empty, static, gem
-- Selected mode highlighted, tap to select then auto-close
-- Current mode shown as subtle icon on the floating button
-
-### 7b. Mode state → `lib/features/controls/mode_state.dart`
-- Riverpod provider for `currentMode`, `currentDirection`, `currentResetVariant`
-- Actions: `setMode()`, `cycleDirection()`, `cyclePaintVariant()`
-
-### 7c. Additional gestures
-- **Double-tap**: new seed (equivalent to N key)
-- **Three-finger tap**: toggle pause/freeze (equivalent to Space)
-- **Swipe down with 3 fingers**: screenshot/save
-
-**Files created**:
-- `lib/features/controls/mode_picker.dart`
-- `lib/features/controls/mode_state.dart`
-
-**Verification**: Mode picker opens/closes, switching modes changes drawing behavior.
+### Implemented
+- `ControlsDrawer` — settings panel with terminal aesthetic
+- `PaintModeSelector` — mode selection for all 12 paint modes
+- `BrushControls` — brush size adjustment (button-based, not pinch)
+- `DirectionPad` — directional control
+- New seed, clear canvas, capture, manual mode, freeze toggle buttons
 
 ---
 
-## Phase 8: Polish & Platform
+## Phase 8: Polish & Platform -- PARTIALLY COMPLETE
 
-**Goal**: Production-quality creative instrument feel.
+### Completed
+- `ImageExporter` — screenshot capture & share
+- App launches and runs on physical iPhone (profile mode)
 
-### 8a. Brush overlay → `lib/features/drawing/brush_overlay.dart`
-- Show brush size/shape indicator at touch point
-- Circle in normal mode, square in blocking mode
-- Semi-transparent, follows finger position
-- Hidden when not touching
-
-### 8b. Screenshot → `lib/features/export/screenshot_service.dart`
-- Capture current frame image
-- Save to photo gallery (use `image_gallery_saver` or platform channels)
-
-### 8c. Haptic feedback
-- Subtle haptic on mode switch, new seed, brush size snap points
-
-### 8d. App lifecycle
-- Pause rendering when app is backgrounded
-- Resume when foregrounded
-- Prevent screen sleep while active
-
-### 8e. Performance optimization
-- Profile on real devices (both iOS and Android)
-- Ensure 60fps with the 770-line shader
-- Reduce uniform count if needed for older devices
-
-**Files created**:
-- `lib/features/drawing/brush_overlay.dart`
-- `lib/features/export/screenshot_service.dart`
+### Not Yet Implemented
+- Brush cursor overlay at touch point
+- Haptic feedback
+- App lifecycle handling (pause when backgrounded)
+- Screen sleep prevention
+- Android testing
+- Performance profiling & optimization
 
 ---
 
-## Final Project Structure
+## Discovered Issues & Solutions
 
-```
-lib/
-  main.dart                              # App entry, ProviderScope
-  app.dart                               # MaterialApp, theme (dark/minimal)
-  core/
-    math/
-      noise.dart                         # Perlin noise, FBM (Dart)
-      seeded_rng.dart                    # Mulberry32 RNG
-      weighted_random.dart               # Weighted selection
-      color_utils.dart                   # HSL↔RGB conversion
-    rendering/
-      render_controller.dart             # Ticker-based frame loop
-      generative_painter.dart            # Main shader CustomPainter
-      draw_buffer_painter.dart           # Drawing shader CustomPainter
-      render_state.dart                  # Frame state (time, fps, images)
-      uniform_mapping.dart               # Named param → setFloat index
-  features/
-    canvas/
-      canvas_screen.dart                 # Full-screen canvas widget
-      gesture_handler.dart               # Scale gesture → draw/pinch
-    drawing/
-      drawing_controller.dart            # Draw logic, line interpolation
-      mode_color.dart                    # Mode → RGB channel encoding
-      brush_state.dart                   # Brush size provider + options
-      brush_overlay.dart                 # Visual brush cursor
-    parameters/
-      parameter_state.dart               # All 52 shader params (freezed)
-      parameter_provider.dart            # Seed → params generation
-    controls/
-      mode_picker.dart                   # Floating button + mode grid
-      mode_state.dart                    # Current mode provider
-    export/
-      screenshot_service.dart            # Capture + save to gallery
-shaders/
-  generative.frag                        # Main 770-line shader (ported)
-  draw.frag                              # Drawing interaction shader
-test/
-  core/math/
-    noise_test.dart
-    seeded_rng_test.dart
-```
-
----
-
-## Build Sequence & Risk Assessment
-
-| Phase | Risk | Why | Mitigation |
-|-------|------|-----|------------|
-| 1. Bootstrap + Math | Low | Pure Dart, well-tested | Write tests first |
-| 2. Shader Porting | **HIGH** | Flutter GLSL is a subset, 770 lines to adapt | Start here after bootstrap, debug early |
-| 3. Ping-Pong | **HIGH** | toImageSync + sampler binding is tricky | Minimal test first, check iOS vs Android |
-| 4. Parameters | Low | Pure Dart state logic | Cross-validate with JS output |
-| 5. Drawing Buffer | Medium | Second ping-pong system + channel encoding | Build on Phase 3 foundation |
-| 6. Gestures | Low | Well-documented Flutter APIs | Use ScaleGestureRecognizer |
-| 7. Mode Picker | Low | Standard Flutter widgets | Keep minimal |
-| 8. Polish | Low | Incremental improvements | Profile on real devices |
-
-**Critical path**: Phase 2 (shader compilation) and Phase 3 (ping-pong rendering) are the make-or-break steps. If Flutter's FragmentProgram can't handle the shader complexity or the dual-sampler ping-pong, we'll need to fall back to `flutter_gl` (raw OpenGL ES) or `flutter_opengl` packages via platform channels.
-
----
-
-## Verification Plan
-
-After each phase, verify before moving on:
-
-1. **Phase 1**: `flutter test` — all math tests pass
-2. **Phase 2**: App launches, shaders compile without error (check debug console)
-3. **Phase 3**: Animated generative art visible on screen with feedback loop
-4. **Phase 4**: New seed changes visuals, parameters are visibly different
-5. **Phase 5**: Drawing on screen affects the animation
-6. **Phase 6**: One-finger draws, two-finger pinch resizes brush
-7. **Phase 7**: Mode picker opens, mode changes affect drawing
-8. **Phase 8**: 60fps on real device, screenshot saves to gallery
+| Issue | Root Cause | Solution |
+|-------|-----------|----------|
+| App crashes on physical iPhone | `toImageSync()` incompatible with Impeller | Use `RenderRepaintBoundary.toImage()` for frame capture |
+| Draw buffer crashes on iPhone | `Picture.toImage()` with shader samplers crashes on Impeller | Use Canvas API (drawCircle/drawRect) instead of draw shader |
+| App crashes when launched from home screen | Debug builds require debugger connection | Use `--profile` or `--release` mode |
+| Glitchy rendering on simulator | Resolution set to physical pixels but `FlutterFragCoord()` returns logical pixels | Pass logical size to `u_resolution`, set `pixelDensity = 1.0` |
+| Waterfall direction inverted | Flutter Y=0 at top, WebGL Y=0 at bottom | Flip Y in shader: `st.y = 1.0 - st.y` at start, flip back for texture samples |
+| Code signing fails | iCloud resource forks in Desktop folder | Build from `~/Development/tech-tonic-flutter` |
+| Metal 31 buffer limit exceeded | Too many shader uniforms | Hard-code most parameters as `const` in shader |
+| Placeholder image creation crashes | `PictureRecorder` + `toImageSync()` crashes with Impeller | Use `decodeImageFromPixels()` for placeholder creation |
 
 ---
 
 ## Reference Files (Original JS/WebGL Source)
 
 These files remain in the repo as conversion reference:
-- `fragmentShader.glsl` — 770-line generative fragment shader (52 uniforms)
-- `vertexShader.glsl` — Simple passthrough vertex shader
-- `main.js` — WebGL rendering, drawing system, input handling, state management
-- `index.html` — Menu UI structure
-- `style.css` — UI styling
+- `reference/fragmentShader.glsl` — 770-line generative fragment shader (52 uniforms)
+- `reference/vertexShader.glsl` — Simple passthrough vertex shader
+- `reference/main.js` — WebGL rendering, drawing system, input handling, state management
+- `reference/index.html` — Menu UI structure
+- `reference/style.css` — UI styling
