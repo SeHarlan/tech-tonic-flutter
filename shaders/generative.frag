@@ -234,11 +234,15 @@ vec4 createGradientBlock(vec2 st, bool horizontal) {
 
 void main() {
     vec2 st = FlutterFragCoord().xy / u_resolution;
+    // Flip Y to match WebGL convention (Y=0 at bottom, Y=1 at top).
+    // FlutterFragCoord() has Y=0 at top, so invert for correct movement/fall.
+    st.y = 1.0 - st.y;
     vec4 blankColor = vec4(BLANK_COLOR, 1.0);
 
     // Global freeze
     if (u_globalFreeze > 0.5) {
-        vec4 color = texture(u_texture, st);
+        // Flip Y back to Flutter texture space (Y=0 at top) for sampling
+        vec4 color = texture(u_texture, vec2(st.x, 1.0 - st.y));
         bool isBgColor = abs(color.r - blankColor.r) < 0.01
                       && abs(color.g - blankColor.g) < 0.01
                       && abs(color.b - blankColor.b) < 0.01;
@@ -278,7 +282,8 @@ void main() {
 
     // Sample drawing buffer
     vec2 drawSt = (FX_WITH_BLOCKING && useBlocking) ? (floor(orgSt * BLOCKING) + 0.5) / BLOCKING : orgSt;
-    vec4 drawColor = texture(u_drawTexture, drawSt);
+    // Flip Y back to Flutter texture space for draw buffer sampling
+    vec4 drawColor = texture(u_drawTexture, vec2(drawSt.x, 1.0 - drawSt.y));
 
     // Decode drawing modes
     bool shuffleMode = false, moveMode = false;
@@ -453,8 +458,8 @@ void main() {
     if (u_forceReset > 0.5) useReset = true;
     if (freezeMode) useReset = false;
 
-    // Sample previous state
-    vec4 color = texture(u_texture, st);
+    // Sample previous state (flip Y back to Flutter texture space)
+    vec4 color = texture(u_texture, vec2(st.x, 1.0 - st.y));
     if (color.a < 0.025 || useReset) {
         fragColor = initColor;
         return;

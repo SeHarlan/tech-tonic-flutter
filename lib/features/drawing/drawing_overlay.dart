@@ -1,20 +1,18 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../core/rendering/render_state.dart';
 import 'drawing_controller.dart';
 
-/// Transparent overlay that captures touch input and feeds it to the
-/// [DrawingController] to render brush strokes to the draw buffer.
+/// Transparent overlay that captures touch input and queues brush strokes
+/// in the [DrawingController]. Strokes are rendered to the draw buffer
+/// each frame by [DrawingController.processPendingStrokes].
 class DrawingOverlay extends StatefulWidget {
   final DrawingController controller;
   final RenderState renderState;
-  final ui.FragmentShader drawShader;
 
   const DrawingOverlay({
     super.key,
     required this.controller,
     required this.renderState,
-    required this.drawShader,
   });
 
   @override
@@ -27,34 +25,14 @@ class _DrawingOverlayState extends State<DrawingOverlay> {
   void _onPanStart(DragStartDetails details) {
     final pos = details.localPosition;
     _lastPosition = pos;
-    final size = context.size;
-    if (size == null) return;
-
-    final pixelRatio =
-        ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
-
-    widget.controller.drawAt(
-      pos.dx, pos.dy,
-      widget.drawShader, widget.renderState,
-      size.width, size.height, pixelRatio,
-    );
+    widget.controller.addStroke(pos.dx, pos.dy);
   }
 
   void _onPanUpdate(DragUpdateDetails details) {
     final pos = details.localPosition;
     final prev = _lastPosition ?? pos;
     _lastPosition = pos;
-    final size = context.size;
-    if (size == null) return;
-
-    final pixelRatio =
-        ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
-
-    widget.controller.drawLine(
-      prev.dx, prev.dy, pos.dx, pos.dy,
-      widget.drawShader, widget.renderState,
-      size.width, size.height, pixelRatio,
-    );
+    widget.controller.addLine(prev.dx, prev.dy, pos.dx, pos.dy);
   }
 
   void _onPanEnd(DragEndDetails details) {
